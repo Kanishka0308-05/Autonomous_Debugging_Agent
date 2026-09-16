@@ -1,0 +1,22 @@
+# Environment
+.env
+venv/
+__pycache__/
+*.pyc
+
+# Database
+*.db
+debug_history.db
+
+# IDE
+.vscode/
+.idea/
+
+# Testing scratch workspace
+temp_workspace/
+.pytest_cache/
+
+# Frontend
+node_modules/
+dist/
+build/
