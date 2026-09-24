@@ -33,6 +33,21 @@ def fallback_root_cause(error_log: str, bug_investigation: Dict[str, Any]) -> Di
         cause = "Accessing dictionary key without checking key existence."
         explanation = "Accessing `dict[key]` directly raises KeyError when key is missing."
         strategy = "Use `dict.get(key, default)` or `if key in dict:` guard."
+    elif "NameError" in error_log:
+        category = "NameError"
+        cause = "The code references a variable or symbol that has not been defined or initialized in current scope."
+        explanation = "Referencing an unassigned identifier raises a NameError at runtime."
+        strategy = "Define or initialize the variable before usage, or fix identifier spelling."
+    elif "SyntaxError" in error_log:
+        category = "SyntaxError"
+        cause = "Python parser encountered invalid syntax structure."
+        explanation = "Code contains missing punctuation, invalid indentation, or incomplete expressions."
+        strategy = "Correct syntax errors (e.g., add missing colons or closing brackets)."
+    elif "compilation" in error_log.lower() or "cannot find symbol" in error_log.lower():
+        category = "CompilationError"
+        cause = "Java compiler failed to compile source file."
+        explanation = "Missing symbols, mismatched types, or invalid Java syntax preventing bytecode generation."
+        strategy = "Resolve missing symbol imports, correct variable declarations, or fix syntax."
     else:
         cause = f"Exception encountered: {error_log.splitlines()[-1] if error_log else 'Unknown error'}"
         explanation = "The program failed due to missing validation or invalid operational state."

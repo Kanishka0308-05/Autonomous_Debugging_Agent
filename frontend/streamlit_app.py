@@ -2,6 +2,7 @@ import sys
 import os
 import json
 import io
+import tempfile
 import zipfile
 import streamlit as st
 
@@ -83,45 +84,20 @@ with st.sidebar:
         st.caption("Add `GEMINI_API_KEY` to `.env` to enable full LLM generation.")
 
     st.divider()
-    st.markdown("### 📚 Demo Presets")
+    st.markdown("### 📚 Quick Demo Presets")
     
-    preset_mode = st.radio("Preset type:", ["Single File", "ZIP Project"])
-
-    if preset_mode == "Single File":
-        selected_demo = st.selectbox(
-            "Load single-file example:",
-            options=["Select preset..."] + list(DEMO_EXAMPLES.keys())
-        )
-
-        if st.button("Load Selected Single File", type="secondary"):
-            if selected_demo in DEMO_EXAMPLES:
-                ex = DEMO_EXAMPLES[selected_demo]
-                st.session_state["code_input"] = ex["code"]
-                st.session_state["error_input"] = ex["error_log"]
-                st.session_state["test_input"] = ex.get("test_code", "")
-                st.session_state["debug_mode"] = "Single File"
-                st.rerun()
-
-    else:
-        selected_proj = st.selectbox(
-            "Load project ZIP preset:",
-            options=["Select project preset..."] + list(DEMO_PROJECT_PRESETS.keys())
-        )
-
-        if st.button("Load Selected Project ZIP", type="secondary"):
-            if selected_proj in DEMO_PROJECT_PRESETS:
-                p_spec = DEMO_PROJECT_PRESETS[selected_proj]
-                # Build in-memory zip
-                buf = io.BytesIO()
-                with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-                    for path, text in p_spec["files"].items():
-                        zf.writestr(path, text)
-                buf.seek(0)
-                
-                st.session_state["uploaded_preset_bytes"] = buf.getvalue()
-                st.session_state["uploaded_preset_name"] = p_spec["filename"]
-                st.session_state["debug_mode"] = "Upload Project"
-                st.rerun()
+    selected_demo = st.selectbox(
+        "Load preset single-file demo:",
+        options=["Select demo..."] + list(DEMO_EXAMPLES.keys())
+    )
+    if st.button("Load Single File Demo", type="secondary"):
+        if selected_demo in DEMO_EXAMPLES:
+            ex = DEMO_EXAMPLES[selected_demo]
+            st.session_state["preset_code"] = ex["code"]
+            st.session_state["preset_error"] = ex["error_log"]
+            st.session_state["preset_test"] = ex.get("test_code", "")
+            st.session_state["debug_mode"] = "Demo Presets"
+            st.rerun()
 
     st.divider()
     st.markdown("### 📜 Session History")
@@ -139,15 +115,15 @@ with st.sidebar:
 st.markdown('<div class="main-header">Autonomous Software Debugging Agent</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Multi-Agent AI Pipeline: Analyze → Reason → Fix → Test → Verify</div>', unsafe_allow_html=True)
 
-# Input Mode Selector
+# Mode Selector
 if "debug_mode" not in st.session_state:
-    st.session_state["debug_mode"] = "Single File"
+    st.session_state["debug_mode"] = "Upload Source File"
 
 debug_mode = st.radio(
     "Select Debug Input Mode:",
-    options=["Single File", "Upload Project"],
+    options=["Upload Source File", "Upload Project ZIP", "Demo Presets"],
     horizontal=True,
-    index=0 if st.session_state.get("debug_mode") == "Single File" else 1,
+    index=["Upload Source File", "Upload Project ZIP", "Demo Presets"].index(st.session_state.get("debug_mode", "Upload Source File")),
     key="mode_radio"
 )
 st.session_state["debug_mode"] = debug_mode
@@ -159,35 +135,54 @@ active_project_path = None
 active_temp_dir = None
 active_language = "python"
 active_build_system = "pytest"
-detection_info = None
+source_code = ""
+error_log = ""
+uploaded_filename = "main.py"
+run_force_agent_pipeline = False
 
-if debug_mode == "Single File":
-    col1, col2 = st.columns(2)
+if debug_mode == "Upload Source File":
+    # --- PHASE 2: REAL FILE UPLOAD MODE ---
+    st.subheader("📄 Upload Source File (.py or .java)")
+    st.caption("Select a standalone Python (`.py`) or Java (`.java`) source code file to analyze and debug.")
 
-    with col1:
-        st.subheader("1. Python Source Code")
-        source_code = st.text_area(
-            "Enter buggy Python code:",
-            value=st.session_state.get("code_input", DEMO_EXAMPLES["ZeroDivisionError (Empty List)"]["code"]),
-            height=240,
-            key="source_editor"
-        )
+    uploaded_src_file = st.file_uploader("Choose a source file", type=["py", "java"])
 
-    with col2:
-        st.subheader("2. Stack Trace / Error Log")
-        error_log = st.text_area(
-            "Paste error log or stack trace:",
-            value=st.session_state.get("error_input", DEMO_EXAMPLES["ZeroDivisionError (Empty List)"]["error_log"]),
-            height=240,
-            key="error_editor"
-        )
+    if uploaded_src_file is not None:
+        uploaded_filename = uploaded_src_file.name
+        file_bytes = uploaded_src_file.read()
+        try:
+            source_code = file_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            source_code = file_bytes.decode("latin-1")
 
-    start_btn = st.button("🚀 Start Autonomous Debugging", type="primary", use_container_width=True)
+        # Detect Language from File Extension
+        ext = os.path.splitext(uploaded_filename)[1].lower()
+        if ext == ".py":
+            active_language = "python"
+            active_build_system = "pytest"
+        elif ext == ".java":
+            active_language = "java"
+            active_build_system = "java-direct"
+        else:
+            st.error(f"Unsupported file extension '{ext}'. Only Python (.py) and Java (.java) source files are supported.")
+            st.stop()
 
-else:
-    # --- UPLOAD PROJECT MODE ---
+        # Display File Metadata Metrics
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Filename", uploaded_filename)
+        c2.metric("Language", active_language.capitalize())
+        c3.metric("File Size", f"{len(file_bytes)} bytes")
+        c4.metric("Status", "Ready for Debugging")
+
+        st.markdown(f"**Source Code Preview (`{uploaded_filename}`):**")
+        st.code(source_code, language=active_language)
+
+    start_btn = st.button("🚀 Start Autonomous Debugging", type="primary", use_container_width=True, disabled=(uploaded_src_file is None))
+
+elif debug_mode == "Upload Project ZIP":
+    # --- UPLOAD PROJECT ZIP MODE ---
     st.subheader("📦 Upload Complete Project (ZIP)")
-    st.caption("Upload a `.zip` archive containing a Python or Java project.")
+    st.caption("Upload a `.zip` archive containing a multi-file Python or Java project.")
 
     uploaded_file = st.file_uploader("Choose a project ZIP file", type=["zip"])
     
@@ -197,10 +192,6 @@ else:
     if uploaded_file is not None:
         zip_bytes = uploaded_file.read()
         zip_filename = uploaded_file.name
-    elif "uploaded_preset_bytes" in st.session_state:
-        zip_bytes = st.session_state["uploaded_preset_bytes"]
-        zip_filename = st.session_state.get("uploaded_preset_name", "preset_project.zip")
-        st.info(f"Loaded demo project preset: `{zip_filename}`")
 
     if zip_bytes is not None:
         temp_dir, project_root, extract_err = WorkspaceManager.extract_zip(io.BytesIO(zip_bytes))
@@ -210,6 +201,7 @@ else:
         else:
             active_temp_dir = temp_dir
             active_project_path = project_root
+            uploaded_filename = zip_filename
             
             # Detect project
             detection_info = detect_project(project_root)
@@ -222,7 +214,6 @@ else:
             else:
                 st.success("Project ZIP extracted and inspected successfully!")
                 
-                # Project Overview Card
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Project Name", zip_filename)
                 
@@ -240,204 +231,236 @@ else:
                 c3.metric("Build/Test System", active_build_system)
                 c4.metric("Total Files", detection_info.get("files_count", 0))
 
-                st.markdown(f"**Test Files Detected:** `{detection_info.get('test_files_count', 0)}`")
-                if detection_info.get("dependency_files"):
-                    st.markdown(f"**Manifest Files:** `{', '.join(detection_info.get('dependency_files'))}`")
-
     start_btn = st.button("🚀 Start Autonomous Project Debugging", type="primary", use_container_width=True, disabled=(active_project_path is None))
+
+else:
+    # --- DEMO PRESETS MODE ---
+    st.subheader("📚 Demo & Preset Examples")
+    st.caption("Pasting custom code or exploring built-in preset examples.")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        source_code = st.text_area(
+            "Python Source Code:",
+            value=st.session_state.get("preset_code", DEMO_EXAMPLES["ZeroDivisionError (Empty List)"]["code"]),
+            height=240
+        )
+    with col2:
+        error_log = st.text_area(
+            "Error Log / Stack Trace:",
+            value=st.session_state.get("preset_error", DEMO_EXAMPLES["ZeroDivisionError (Empty List)"]["error_log"]),
+            height=240
+        )
+
+    active_language = "python"
+    active_build_system = "pytest"
+    uploaded_filename = "demo.py"
+
+    start_btn = st.button("🚀 Start Autonomous Debugging", type="primary", use_container_width=True)
 
 
 # --- WORKFLOW EXECUTION ---
 if start_btn:
-    if debug_mode == "Single File" and not source_code.strip():
-        st.error("Please provide Python source code to debug.")
-    elif debug_mode == "Upload Project" and not active_project_path:
-        st.error("Please upload a valid project ZIP archive first.")
+    st.divider()
+    st.subheader("🔄 Multi-Agent Workflow Execution")
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    # Step 1: Create File-Based Workspace if single source file was uploaded
+    if debug_mode == "Upload Source File":
+        active_temp_dir = tempfile.mkdtemp(prefix="debug_workspace_")
+        active_project_path = active_temp_dir
+        file_path = os.path.join(active_temp_dir, uploaded_filename)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(source_code)
+
+    # Step 2: Initial Execution to Determine Real Errors
+    status_text.text("Initial Execution: Running uploaded code to detect errors...")
+    progress_bar.progress(10)
+
+    if active_language == "java":
+        init_adapter = JavaAdapter(active_project_path)
     else:
-        st.divider()
-        st.subheader("🔄 Multi-Agent Workflow Execution")
+        init_adapter = PythonAdapter(active_project_path)
+
+    init_exec = init_adapter.run_tests() if debug_mode != "Upload Source File" else init_adapter.run_project()
+    init_error_log = (init_exec.get("output") or init_exec.get("stderr") or "").strip()
+
+    # Step 3: Phase 6 Check — Handle Files With No Error
+    no_error_detected = (
+        init_exec.get("status") == "passed" and 
+        init_exec.get("exit_code") == 0 and 
+        not init_exec.get("stderr")
+    )
+
+    if no_error_detected and debug_mode == "Upload Source File":
+        progress_bar.progress(100)
+        status_text.text("✅ Execution Completed Cleanly!")
+        st.success("✅ No runtime or compilation error detected!")
         
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        m1, m2, m3 = st.columns(3)
+        m1.metric("File Name", uploaded_filename)
+        m2.metric("Language", active_language.capitalize())
+        m3.metric("Execution Exit Code", 0)
 
-        # Initialize execution state
-        if debug_mode == "Single File":
-            initial_state = {
-                "input_mode": "single_file",
-                "source_code": source_code,
-                "error_log": error_log,
-                "test_code": st.session_state.get("test_input", None),
-                "code_analysis": None,
-                "bug_investigation": None,
-                "root_cause": None,
-                "candidate_fix": None,
-                "test_results": None,
-                "verification_result": None,
-                "iteration_count": 0,
-                "max_iterations": 3,
-                "history": [],
-                "final_report": None,
-                "is_mock_mode": not gemini_active,
-                "language": "python",
-                "project_name": "Single File"
-            }
-        else:
-            # First execution run to collect initial errors from project if error_log is empty
-            if active_language == "java":
-                init_adapter = JavaAdapter(active_project_path)
+        st.markdown("**Execution Output:**")
+        st.code(init_exec.get("stdout") or "Program executed cleanly with no stdout output.", language="bash")
+        
+        st.info("Since the uploaded file executed cleanly without errors, the autonomous fix-generation loop was not required.")
+
+        # Cleanup workspace
+        if active_temp_dir:
+            WorkspaceManager.cleanup(active_temp_dir)
+        st.stop()
+
+    # Step 4: Construct Initial Execution State for 7-Agent Pipeline
+    initial_state = {
+        "input_mode": "single_file" if debug_mode != "Upload Project ZIP" else "project",
+        "project_path": active_project_path,
+        "project_name": uploaded_filename,
+        "language": active_language,
+        "build_system": active_build_system,
+        "source_code": source_code,
+        "error_log": error_log if error_log and debug_mode == "Demo Presets" else (init_error_log if init_error_log else "Execution failure"),
+        "execution_result": init_exec,
+        "test_code": st.session_state.get("preset_test", None),
+        "code_analysis": None,
+        "bug_investigation": None,
+        "root_cause": None,
+        "candidate_fix": None,
+        "test_results": None,
+        "verification_result": None,
+        "iteration_count": 0,
+        "max_iterations": 3,
+        "history": [],
+        "final_report": None,
+        "is_mock_mode": not gemini_active
+    }
+
+    try:
+        status_text.text("1/7 Code Analysis Agent inspecting code structure...")
+        progress_bar.progress(20)
+        
+        # Execute LangGraph workflow
+        final_state = debugging_app.invoke(initial_state)
+        progress_bar.progress(100)
+        status_text.text("✅ Autonomous Debugging Pipeline Complete!")
+
+        st.success("Workflow Execution Finished Successfully!")
+
+        # --- DISPLAY 7 AGENTS DETAILS ---
+        st.subheader("🧩 Specialized Agent Details")
+
+        # 1. Code Analysis
+        with st.expander("🔍 1. Code Analysis Agent", expanded=True):
+            ca = final_state.get("code_analysis", {})
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("File / Project", uploaded_filename)
+            c2.metric("Language", final_state.get("language", active_language).capitalize())
+            c3.metric("Source Files", len(ca.get("source_files", [])) or 1)
+            c4.metric("Test Files", len(ca.get("test_files", [])))
+            st.markdown(f"**Summary:** {ca.get('summary')}")
+            st.json(ca)
+
+        # 2. Bug Investigation
+        with st.expander("📍 2. Bug Investigation Agent", expanded=True):
+            bi = final_state.get("bug_investigation", {})
+            st.markdown(f"**Suspected Location:** `{bi.get('suspected_location')}`")
+            st.markdown(f"**Suspicious Code Snippet:** `{bi.get('suspicious_code')}`")
+            st.markdown(f"**Reason:** {bi.get('reason')}")
+            st.json(bi)
+
+        # 3. Root Cause
+        with st.expander("🧠 3. Root Cause Agent", expanded=True):
+            rc = final_state.get("root_cause", {})
+            st.info(f"**Bug Category:** `{rc.get('bug_category')}`")
+            st.markdown(f"**Root Cause:** {rc.get('root_cause')}")
+            st.markdown(f"**Explanation:** {rc.get('explanation')}")
+            st.markdown(f"**Recommended Strategy:** {rc.get('recommended_fix_strategy')}")
+
+        # 4. Fix Generation
+        with st.expander("🛠️ 4. Fix Generation Agent", expanded=True):
+            cf = final_state.get("candidate_fix", {})
+            st.markdown(f"**Fix Strategy Explanation:** {cf.get('explanation')}")
+            if cf.get("patches"):
+                for p in cf.get("patches"):
+                    st.markdown(f"**Patch File:** `{p.get('file')}`")
+                    st.code(p.get("changes", ""), language=active_language)
             else:
-                init_adapter = PythonAdapter(active_project_path)
+                st.code(cf.get("fixed_code", ""), language=active_language)
 
-            init_exec = init_adapter.run_tests()
-            init_error_log = init_exec.get("output") or init_exec.get("stderr") or "Build/Test failure"
+        # 5. Testing Agent
+        with st.expander("🧪 5. Testing Agent Execution", expanded=True):
+            tr = final_state.get("test_results", {})
+            tc1, tc2, tc3 = st.columns(3)
+            tc1.metric("Tests Executed", tr.get("tests_run", 0))
+            tc2.metric("Passed", tr.get("passed", 0))
+            tc3.metric("Failed", tr.get("failed", 0))
+            st.code(tr.get("output", ""), language="bash")
 
-            initial_state = {
-                "input_mode": "project",
-                "project_path": active_project_path,
-                "project_name": zip_filename,
-                "language": active_language,
-                "build_system": active_build_system,
-                "source_code": "",
-                "error_log": init_error_log,
-                "execution_result": init_exec,
-                "test_code": None,
-                "code_analysis": None,
-                "bug_investigation": None,
-                "root_cause": None,
-                "candidate_fix": None,
-                "test_results": None,
-                "verification_result": None,
-                "iteration_count": 0,
-                "max_iterations": 3,
-                "history": [],
-                "final_report": None,
-                "is_mock_mode": not gemini_active
-            }
+        # 6. Verification Agent
+        with st.expander("🎯 6. Verification Agent", expanded=True):
+            vr = final_state.get("verification_result", {})
+            v_status = vr.get("status", "UNVERIFIED")
+            if v_status == "VERIFIED":
+                st.success(f"Status: {v_status} — {vr.get('reason')}")
+            else:
+                st.error(f"Status: {v_status} — {vr.get('reason')}")
 
-        try:
-            status_text.text("1/7 Code Analysis Agent inspecting project structure...")
-            progress_bar.progress(15)
-            
-            # Execute LangGraph workflow
-            final_state = debugging_app.invoke(initial_state)
-            progress_bar.progress(100)
-            status_text.text("✅ Autonomous Debugging Pipeline Complete!")
+        # 7. Supervisor Agent Overview
+        with st.expander("👑 7. Supervisor Agent Overview", expanded=True):
+            sup = final_state.get("final_report", {})
+            st.json(sup)
 
-            st.success("Workflow Execution Finished Successfully!")
+        # --- PHASE 9: BEFORE/AFTER DIFF & FINAL REPORT ---
+        st.divider()
+        st.subheader("📊 Final Debugging Report & Code Diff")
 
-            # --- DISPLAY 7 AGENTS DETAILS ---
-            st.subheader("🧩 Specialized Agent Details")
+        report = final_state.get("final_report", {})
+        v_status = report.get("status", "UNVERIFIED")
 
-            # 1. Code Analysis
-            with st.expander("🔍 1. Code Analysis Agent", expanded=True):
-                ca = final_state.get("code_analysis", {})
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Mode", "Project" if ca.get("is_project") else "Single File")
-                c2.metric("Language", final_state.get("language", "python").capitalize())
-                c3.metric("Source Files", len(ca.get("source_files", [])))
-                c4.metric("Test Files", len(ca.get("test_files", [])))
-                st.markdown(f"**Summary:** {ca.get('summary')}")
-                st.json(ca)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Verification Status", v_status)
+        m2.metric("Iterations Used", report.get("iterations_used", 1))
+        m3.metric("Bug Category", report.get("bug_category", "Unknown"))
+        m4.metric("Tests Passed", f"{report.get('tests_passed', 0)} / {report.get('tests_passed', 0) + report.get('tests_failed', 0)}")
 
-            # 2. Bug Investigation
-            with st.expander("📍 2. Bug Investigation Agent", expanded=True):
-                bi = final_state.get("bug_investigation", {})
-                st.markdown(f"**Suspected Location:** `{bi.get('suspected_location')}`")
-                st.markdown(f"**Suspicious Code Snippet:** `{bi.get('suspicious_code')}`")
-                st.markdown(f"**Reason:** {bi.get('reason')}")
-                st.json(bi)
+        comp_col1, comp_col2 = st.columns(2)
+        with comp_col1:
+            st.markdown(f"#### ❌ Original File (`{uploaded_filename}`)")
+            if source_code:
+                st.code(source_code, language=active_language)
+            else:
+                st.code(final_state.get("error_log", "Execution Log"), language="text")
 
-            # 3. Root Cause
-            with st.expander("🧠 3. Root Cause Agent", expanded=True):
-                rc = final_state.get("root_cause", {})
-                st.info(f"**Bug Category:** `{rc.get('bug_category')}`")
-                st.markdown(f"**Root Cause:** {rc.get('root_cause')}")
-                st.markdown(f"**Explanation:** {rc.get('explanation')}")
-                st.markdown(f"**Recommended Strategy:** {rc.get('recommended_fix_strategy')}")
+        with comp_col2:
+            st.markdown(f"#### ✅ Fixed File (`{uploaded_filename}`)")
+            if report.get("patches"):
+                for p in report.get("patches"):
+                    st.code(p.get("changes", ""), language=active_language)
+            elif report.get("fixed_code"):
+                st.code(report.get("fixed_code"), language=active_language)
 
-            # 4. Fix Generation
-            with st.expander("🛠️ 4. Fix Generation Agent", expanded=True):
-                cf = final_state.get("candidate_fix", {})
-                st.markdown(f"**Fix Strategy Explanation:** {cf.get('explanation')}")
-                if cf.get("patches"):
-                    for p in cf.get("patches"):
-                        st.markdown(f"**Patch File:** `{p.get('file')}`")
-                        st.code(p.get("changes", ""), language=active_language)
-                else:
-                    st.code(cf.get("fixed_code", ""), language=active_language)
+        # Save session to SQLite database
+        save_title = f"Fix {report.get('bug_category', 'Bug')} ({uploaded_filename})"
+        save_debug_session(
+            title=save_title,
+            source_code=source_code if source_code else f"File: {uploaded_filename}",
+            error_log=final_state.get("error_log", ""),
+            bug_category=report.get("bug_category", ""),
+            root_cause=report.get("root_cause", ""),
+            fixed_code=report.get("fixed_code", "") if not report.get("patches") else json.dumps(report.get("patches")),
+            verification_status=v_status,
+            iterations=report.get("iterations_used", 1),
+            language=active_language.capitalize(),
+            project_name=uploaded_filename
+        )
+        st.toast("Saved debug session to SQLite database!", icon="💾")
 
-            # 5. Testing Agent
-            with st.expander("🧪 5. Testing Agent Execution", expanded=True):
-                tr = final_state.get("test_results", {})
-                tc1, tc2, tc3 = st.columns(3)
-                tc1.metric("Tests Executed", tr.get("tests_run", 0))
-                tc2.metric("Passed", tr.get("passed", 0))
-                tc3.metric("Failed", tr.get("failed", 0))
-                st.code(tr.get("output", ""), language="bash")
-
-            # 6. Verification Agent
-            with st.expander("🎯 6. Verification Agent", expanded=True):
-                vr = final_state.get("verification_result", {})
-                v_status = vr.get("status", "UNVERIFIED")
-                if v_status == "VERIFIED":
-                    st.success(f"Status: {v_status} — {vr.get('reason')}")
-                else:
-                    st.error(f"Status: {v_status} — {vr.get('reason')}")
-
-            # 7. Supervisor Agent Overview
-            with st.expander("👑 7. Supervisor Agent Overview", expanded=True):
-                sup = final_state.get("final_report", {})
-                st.json(sup)
-
-            # --- FINAL REPORT SUMMARY CARD ---
-            st.divider()
-            st.subheader("📊 Final Debugging Report")
-
-            report = final_state.get("final_report", {})
-            v_status = report.get("status", "UNVERIFIED")
-
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Verification Status", v_status)
-            m2.metric("Iterations Used", report.get("iterations_used", 1))
-            m3.metric("Bug Category", report.get("bug_category", "Unknown"))
-            m4.metric("Tests Passed", f"{report.get('tests_passed', 0)} / {report.get('tests_passed', 0) + report.get('tests_failed', 0)}")
-
-            comp_col1, comp_col2 = st.columns(2)
-            with comp_col1:
-                st.markdown("#### ❌ Initial Bug Context")
-                if debug_mode == "Single File":
-                    st.code(source_code, language="python")
-                else:
-                    st.code(final_state.get("error_log", "Execution Log"), language="text")
-
-            with comp_col2:
-                st.markdown("#### ✅ Candidate Fix / Patches")
-                if report.get("patches"):
-                    for p in report.get("patches"):
-                        st.markdown(f"**{p.get('file')}**")
-                        st.code(p.get("changes", ""), language=active_language)
-                else:
-                    st.code(report.get("fixed_code", ""), language=active_language)
-
-            # Save session to SQLite database
-            save_title = f"Fix {report.get('bug_category', 'Bug')} ({final_state.get('project_name', 'Project')})"
-            save_debug_session(
-                title=save_title,
-                source_code=source_code if debug_mode == "Single File" else f"Project: {final_state.get('project_name')}",
-                error_log=final_state.get("error_log", ""),
-                bug_category=report.get("bug_category", ""),
-                root_cause=report.get("root_cause", ""),
-                fixed_code=report.get("fixed_code", "") if not report.get("patches") else json.dumps(report.get("patches")),
-                verification_status=v_status,
-                iterations=report.get("iterations_used", 1),
-                language=active_language.capitalize(),
-                project_name=final_state.get("project_name", "Single File")
-            )
-            st.toast("Saved session to SQLite database!", icon="💾")
-
-        except Exception as e:
-            st.error(f"Error during agent pipeline execution: {str(e)}")
-            st.exception(e)
-        finally:
-            if active_temp_dir:
-                WorkspaceManager.cleanup(active_temp_dir)
+    except Exception as e:
+        st.error(f"Error during agent pipeline execution: {str(e)}")
+        st.exception(e)
+    finally:
+        if active_temp_dir:
+            WorkspaceManager.cleanup(active_temp_dir)

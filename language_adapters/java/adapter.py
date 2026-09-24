@@ -45,10 +45,13 @@ class JavaAdapter(BaseLanguageAdapter):
             for f in files:
                 if f.endswith('.java'):
                     rel_path = os.path.relpath(os.path.join(root, f), self.project_path)
-                    if 'test' in rel_path.lower() or f.endswith('Test.java') or f.endswith('Tests.java'):
+                    if build_system != "java-direct" and ('test' in rel_path.lower() or f.endswith('Test.java') or f.endswith('Tests.java')):
                         test_files.append(rel_path)
                     else:
                         source_files.append(rel_path)
+
+        if not source_files and test_files:
+            source_files = test_files.copy()
 
         return {
             "language": "java",
@@ -299,11 +302,20 @@ class JavaAdapter(BaseLanguageAdapter):
             try:
                 with open(full, 'r', encoding='utf-8') as f:
                     txt = f.read()
-                    if "public static void main" in txt:
+                    if "main(" in txt and "static" in txt:
+                        # Extract package name if present
+                        pkg_match = re.search(r'package\s+([a-zA-Z0-9_\.]+);', txt)
+                        pkg_name = pkg_match.group(1).strip() if pkg_match else ""
+
                         # Extract class name
-                        m = re.search(r'public\s+class\s+([A-Za-z0-9_]+)', txt)
+                        m = re.search(r'(?:public\s+|protected\s+|private\s+)?class\s+([A-Za-z0-9_]+)', txt)
                         if m:
-                            main_class = m.group(1)
+                            cls_name = m.group(1)
+                            main_class = f"{pkg_name}.{cls_name}" if pkg_name else cls_name
+                            break
+                        else:
+                            base_name = os.path.splitext(os.path.basename(src))[0]
+                            main_class = f"{pkg_name}.{base_name}" if pkg_name else base_name
                             break
             except Exception:
                 pass
@@ -333,17 +345,18 @@ class JavaAdapter(BaseLanguageAdapter):
                 timeout=15
             )
             output = (res.stdout + "\n" + res.stderr).strip()
+            has_error = res.returncode != 0 or bool(re.search(r'(?:Exception|Error)', res.stderr))
             return {
                 "language": "java",
                 "build_system": "java-direct",
-                "status": "passed" if res.returncode == 0 else "failed",
-                "exit_code": res.returncode,
+                "status": "failed" if has_error else "passed",
+                "exit_code": res.returncode if res.returncode != 0 else (1 if has_error else 0),
                 "stdout": res.stdout.strip(),
                 "stderr": res.stderr.strip(),
                 "output": output,
                 "tests_run": False,
-                "passed_count": 1 if res.returncode == 0 else 0,
-                "failed_count": 0 if res.returncode == 0 else 1,
+                "passed_count": 0 if has_error else 1,
+                "failed_count": 1 if has_error else 0,
                 "files": analysis["source_files"]
             }
         except Exception as e:

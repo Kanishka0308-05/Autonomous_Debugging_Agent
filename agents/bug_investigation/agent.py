@@ -17,7 +17,9 @@ def fallback_bug_investigation(source_code: str, error_log: str, code_analysis: 
     if not file_match:
         file_match = re.search(r'File "([^"]+)", line (\d+)', error_log)
         
-    suspected_file = file_match.group(1) if file_match else "source file"
+    src_files = code_analysis.get("source_files", [])
+    default_file = src_files[0] if src_files else "source file"
+    suspected_file = file_match.group(1) if file_match else default_file
     line_num = file_match.group(2) if file_match else "unknown"
 
     if line_num == "unknown":
@@ -28,7 +30,7 @@ def fallback_bug_investigation(source_code: str, error_log: str, code_analysis: 
     suspicious_snippet = source_code.strip() if source_code else "See stack trace error location."
     if source_code:
         lines = source_code.splitlines()
-        if line_num.isdigit() and int(line_num) <= len(lines):
+        if line_num.isdigit() and 1 <= int(line_num) <= len(lines):
             suspicious_snippet = lines[int(line_num) - 1].strip()
 
     reason = "Error detected in stack trace."
@@ -42,6 +44,10 @@ def fallback_bug_investigation(source_code: str, error_log: str, code_analysis: 
         reason = "Incompatible types used in operation."
     elif "KeyError" in error_log:
         reason = "Accessing dictionary key that does not exist in mapping."
+    elif "NameError" in error_log:
+        reason = "Reference to undefined variable or function name."
+    elif "SyntaxError" in error_log:
+        reason = "Invalid syntax structure preventing compilation/parsing."
     elif "compilation" in error_log.lower() or "cannot find symbol" in error_log.lower():
         reason = "Java compilation error encountered during build."
 

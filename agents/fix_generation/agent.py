@@ -18,11 +18,13 @@ def fallback_fix_generation(
     code_analysis = code_analysis or {}
     snippets = code_analysis.get("snippets", {})
 
+    src_files = code_analysis.get("source_files", [])
+    py_file = src_files[0] if src_files else (list(snippets.keys())[0] if snippets else "main.py")
+    java_file = src_files[0] if src_files else (list(snippets.keys())[0] if snippets else "UserService.java")
+
     # Check Java NullPointerException
     if "NullPointerException" in error_log or category == "NullPointerException":
-        java_file = "src/main/java/com/example/UserService.java"
-        if snippets:
-            java_file = list(snippets.keys())[0]
+        if snippets and java_file in snippets:
             source_code = snippets[java_file]
 
         if "user.getName()" in source_code or "user == null" not in source_code:
@@ -53,9 +55,7 @@ def fallback_fix_generation(
 
     # Python error fixes
     if "ZeroDivisionError" in error_log or category == "ZeroDivisionError":
-        py_file = "main.py"
-        if snippets:
-            py_file = list(snippets.keys())[0]
+        if snippets and py_file in snippets:
             source_code = snippets[py_file]
 
         if "return total / count" in source_code:
@@ -91,9 +91,7 @@ def fallback_fix_generation(
         }
 
     elif "IndexError" in error_log or category == "IndexError":
-        py_file = "main.py"
-        if snippets:
-            py_file = list(snippets.keys())[0]
+        if snippets and py_file in snippets:
             source_code = snippets[py_file]
 
         if "return items[2]" in source_code:
@@ -121,9 +119,7 @@ def fallback_fix_generation(
         }
 
     elif "TypeError" in error_log or category == "TypeError":
-        py_file = "main.py"
-        if snippets:
-            py_file = list(snippets.keys())[0]
+        if snippets and py_file in snippets:
             source_code = snippets[py_file]
 
         fixed_code = source_code.replace("(discount_percent / 100)", "(float(discount_percent) / 100)")
@@ -145,9 +141,7 @@ def fallback_fix_generation(
         }
 
     elif "KeyError" in error_log or category == "KeyError":
-        py_file = "main.py"
-        if snippets:
-            py_file = list(snippets.keys())[0]
+        if snippets and py_file in snippets:
             source_code = snippets[py_file]
 
         fixed_code = source_code.replace('user_profile["email"]', 'user_profile.get("email", None)')
@@ -166,11 +160,32 @@ def fallback_fix_generation(
             "patches": patches
         }
 
+    elif "NameError" in error_log or category == "NameError":
+        name_match = re.search(r"name '([^']+)' is not defined", error_log)
+        var_name = name_match.group(1) if name_match else "undefined_var"
+        fixed_code = f"{var_name} = None\n" + source_code
+        explanation = f"Defined variable '{var_name}' before reference to resolve NameError."
+        changed_section = f"+ {var_name} = None"
+        patches = [{"file": py_file, "changes": fixed_code, "reason": explanation}]
+        return {"explanation": explanation, "fixed_code": fixed_code, "changed_section": changed_section, "patches": patches}
+
+    elif "SyntaxError" in error_log or category == "SyntaxError":
+        fixed_code = source_code
+        lines = source_code.splitlines()
+        fixed_lines = []
+        for line in lines:
+            if line.strip().startswith("def ") or line.strip().startswith("if ") or line.strip().startswith("else") or line.strip().startswith("for ") or line.strip().startswith("while "):
+                if not line.strip().endswith(":"):
+                    line = line + ":"
+            fixed_lines.append(line)
+        fixed_code = "\n".join(fixed_lines)
+        explanation = "Corrected missing syntax colon at block statement end."
+        changed_section = "+ Added missing syntax colons."
+        patches = [{"file": py_file, "changes": fixed_code, "reason": explanation}]
+        return {"explanation": explanation, "fixed_code": fixed_code, "changed_section": changed_section, "patches": patches}
+
     else:
-        target_file = "main.py"
-        if snippets:
-            target_file = list(snippets.keys())[0]
-            source_code = snippets[target_file]
+        target_file = py_file if src_files else "main.py"
         fixed_code = source_code + "\n# Auto-applied safety guard\n"
         explanation = "Applied general error prevention wrapper."
         changed_section = "Appended safety guard comments."
@@ -231,9 +246,7 @@ def generate_fix_agent(state: Dict[str, Any]) -> Dict[str, Any]:
                 parsed = json.loads(cleaned.strip())
                 if "fixed_code" in parsed or "patches" in parsed:
                     if "patches" not in parsed:
-                        main_file = "main.py"
-                        if code_analysis.get("source_files"):
-                            main_file = code_analysis["source_files"][0]
+                        main_file = state.get("project_name") or (code_analysis.get("source_files")[0] if code_analysis.get("source_files") else "main.py")
                         parsed["patches"] = [{
                             "file": main_file,
                             "changes": parsed.get("fixed_code", source_code),
