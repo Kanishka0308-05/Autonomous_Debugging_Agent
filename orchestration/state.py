@@ -35,3 +35,4 @@ class DebuggingState(TypedDict):
     test_failures: Optional[str]
     changed_files: Optional[List[str]]
     patches: Optional[List[Dict[str, Any]]]
+    classified_error: Optional[Dict[str, Any]]

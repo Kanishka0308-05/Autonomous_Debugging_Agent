@@ -19,6 +19,7 @@ from utils.workspace import WorkspaceManager
 from language_adapters.detector import detect_project
 from language_adapters.python.adapter import PythonAdapter
 from language_adapters.java.adapter import JavaAdapter
+from utils.error_classifier import classify_error
 
 # Set page config
 st.set_page_config(
@@ -27,6 +28,45 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+def load_demo_preset(preset_key: str) -> bool:
+    """
+    Helper to load a demo preset:
+    Creates a real temporary source file on disk, populates session state, and sets demo_loaded = True.
+    """
+    if preset_key not in DEMO_EXAMPLES:
+        st.error(f"Unknown preset key: '{preset_key}'")
+        st.session_state["demo_loaded"] = False
+        return False
+
+    ex = DEMO_EXAMPLES[preset_key]
+    lang = ex.get("language", "python")
+    filename = ex.get("filename", "demo.py" if lang == "python" else "Main.java")
+    code = ex.get("code", "")
+    err_log = ex.get("error_log", "")
+    test_code = ex.get("test_code", "")
+
+    try:
+        demo_dir = tempfile.mkdtemp(prefix="demo_workspace_")
+        demo_file_path = os.path.join(demo_dir, filename)
+        with open(demo_file_path, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        st.session_state["demo_loaded"] = True
+        st.session_state["demo_file_path"] = demo_file_path
+        st.session_state["demo_file_name"] = filename
+        st.session_state["demo_language"] = lang
+        st.session_state["demo_source_code"] = code
+        st.session_state["demo_error_log"] = err_log
+        st.session_state["preset_test"] = test_code
+        st.session_state["selected_demo_name"] = preset_key
+        st.session_state["debug_mode"] = "Demo Presets"
+        st.session_state["mode_radio"] = "Demo Presets"
+        return True
+    except Exception as e:
+        st.error(f"Failed to create temporary demo source file: {str(e)}")
+        st.session_state["demo_loaded"] = False
+        return False
 
 # Custom CSS for rich dark modern aesthetic
 st.markdown("""
@@ -65,6 +105,16 @@ st.markdown("""
         border-radius: 12px;
         font-weight: 600;
     }
+    [data-testid="stMetricValue"] {
+        font-size: 1.25rem !important;
+        font-weight: 600 !important;
+        line-height: 1.4 !important;
+        word-break: break-word !important;
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 0.85rem !important;
+        color: #A0AEC0 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -86,18 +136,16 @@ with st.sidebar:
     st.divider()
     st.markdown("### 📚 Quick Demo Presets")
     
-    selected_demo = st.selectbox(
+    sidebar_selected = st.selectbox(
         "Load preset single-file demo:",
-        options=["Select demo..."] + list(DEMO_EXAMPLES.keys())
+        options=["Select demo..."] + list(DEMO_EXAMPLES.keys()),
+        key="sidebar_demo_select"
     )
-    if st.button("Load Single File Demo", type="secondary"):
-        if selected_demo in DEMO_EXAMPLES:
-            ex = DEMO_EXAMPLES[selected_demo]
-            st.session_state["preset_code"] = ex["code"]
-            st.session_state["preset_error"] = ex["error_log"]
-            st.session_state["preset_test"] = ex.get("test_code", "")
-            st.session_state["debug_mode"] = "Demo Presets"
-            st.rerun()
+    if st.button("Load Single File Demo", type="secondary", key="sidebar_load_btn"):
+        if sidebar_selected != "Select demo...":
+            if load_demo_preset(sidebar_selected):
+                st.success(f"Loaded '{sidebar_selected}' preset workspace!")
+                st.rerun()
 
     st.divider()
     st.markdown("### 📜 Session History")
@@ -113,7 +161,7 @@ with st.sidebar:
 
 # --- MAIN UI ---
 st.markdown('<div class="main-header">Autonomous Software Debugging Agent</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Multi-Agent AI Pipeline: Analyze → Reason → Fix → Test → Verify</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Multi-Agent AI Pipeline with Error Classification Engine</div>', unsafe_allow_html=True)
 
 # Mode Selector
 if "debug_mode" not in st.session_state:
@@ -123,10 +171,8 @@ debug_mode = st.radio(
     "Select Debug Input Mode:",
     options=["Upload Source File", "Upload Project ZIP", "Demo Presets"],
     horizontal=True,
-    index=["Upload Source File", "Upload Project ZIP", "Demo Presets"].index(st.session_state.get("debug_mode", "Upload Source File")),
-    key="mode_radio"
+    key="debug_mode"
 )
-st.session_state["debug_mode"] = debug_mode
 
 st.divider()
 
@@ -138,12 +184,11 @@ active_build_system = "pytest"
 source_code = ""
 error_log = ""
 uploaded_filename = "main.py"
-run_force_agent_pipeline = False
 
 if debug_mode == "Upload Source File":
-    # --- PHASE 2: REAL FILE UPLOAD MODE ---
+    # --- REAL FILE UPLOAD MODE ---
     st.subheader("📄 Upload Source File (.py or .java)")
-    st.caption("Select a standalone Python (`.py`) or Java (`.java`) source code file to analyze and debug.")
+    st.caption("Select a standalone Python (`.py`) or Java (`.java`) source code file to classify and debug.")
 
     uploaded_src_file = st.file_uploader("Choose a source file", type=["py", "java"])
 
@@ -172,12 +217,12 @@ if debug_mode == "Upload Source File":
         c1.metric("Filename", uploaded_filename)
         c2.metric("Language", active_language.capitalize())
         c3.metric("File Size", f"{len(file_bytes)} bytes")
-        c4.metric("Status", "Ready for Debugging")
+        c4.metric("Status", "Ready for Classification")
 
         st.markdown(f"**Source Code Preview (`{uploaded_filename}`):**")
         st.code(source_code, language=active_language)
 
-    start_btn = st.button("🚀 Start Autonomous Debugging", type="primary", use_container_width=True, disabled=(uploaded_src_file is None))
+    start_btn = st.button("🚀 Start Error Classification & Debugging", type="primary", use_container_width=True, disabled=(uploaded_src_file is None))
 
 elif debug_mode == "Upload Project ZIP":
     # --- UPLOAD PROJECT ZIP MODE ---
@@ -236,47 +281,119 @@ elif debug_mode == "Upload Project ZIP":
 else:
     # --- DEMO PRESETS MODE ---
     st.subheader("📚 Demo & Preset Examples")
-    st.caption("Pasting custom code or exploring built-in preset examples.")
+    st.caption("Select a built-in Python or Java demo preset to load a real temporary source file into the debugging pipeline.")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        source_code = st.text_area(
-            "Python Source Code:",
-            value=st.session_state.get("preset_code", DEMO_EXAMPLES["ZeroDivisionError (Empty List)"]["code"]),
-            height=240
-        )
-    with col2:
-        error_log = st.text_area(
-            "Error Log / Stack Trace:",
-            value=st.session_state.get("preset_error", DEMO_EXAMPLES["ZeroDivisionError (Empty List)"]["error_log"]),
-            height=240
-        )
+    preset_keys = list(DEMO_EXAMPLES.keys())
+    current_preset = st.session_state.get("selected_demo_name", preset_keys[0])
+    if current_preset not in preset_keys:
+        current_preset = preset_keys[0]
 
-    active_language = "python"
-    active_build_system = "pytest"
-    uploaded_filename = "demo.py"
+    c_sel, c_btn = st.columns([3, 1])
+    with c_sel:
+        chosen_preset = st.selectbox(
+            "Select Preset Example:",
+            options=preset_keys,
+            index=preset_keys.index(current_preset) if current_preset in preset_keys else 0,
+            key="main_demo_select"
+        )
+    with c_btn:
+        st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
+        if st.button("Load Single File Demo", type="primary", key="main_load_btn", use_container_width=True):
+            if load_demo_preset(chosen_preset):
+                st.rerun()
 
-    start_btn = st.button("🚀 Start Autonomous Debugging", type="primary", use_container_width=True)
+    demo_is_loaded = st.session_state.get("demo_loaded", False)
+    demo_file_path = st.session_state.get("demo_file_path")
+
+    # Verify that the demo temporary file actually exists on disk
+    if demo_is_loaded and demo_file_path and os.path.exists(demo_file_path):
+        active_language = st.session_state.get("demo_language", "python")
+        uploaded_filename = st.session_state.get("demo_file_name", "demo.py")
+        active_build_system = "pytest" if active_language == "python" else "java-direct"
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Preset Name", st.session_state.get("selected_demo_name", "Custom"))
+        c2.metric("Filename", uploaded_filename)
+        c3.metric("Language", active_language.capitalize())
+        c4.metric("Status", "Workspace Ready ✅")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            source_code = st.text_area(
+                f"{active_language.capitalize()} Source Code (`{uploaded_filename}`):",
+                value=st.session_state.get("demo_source_code", ""),
+                height=240,
+                key="demo_src_text_area"
+            )
+            st.session_state["demo_source_code"] = source_code
+            try:
+                with open(demo_file_path, "w", encoding="utf-8") as f:
+                    f.write(source_code)
+            except Exception as e:
+                st.warning(f"Could not sync edited code to disk: {e}")
+
+        with col2:
+            error_log = st.text_area(
+                "Error Log / Stack Trace:",
+                value=st.session_state.get("demo_error_log", ""),
+                height=240,
+                key="demo_err_text_area"
+            )
+            st.session_state["demo_error_log"] = error_log
+
+        start_btn = st.button("🚀 Start Autonomous Debugging", type="primary", use_container_width=True, disabled=False, key="demo_start_btn")
+    else:
+        st.info("👈 Please select a preset example above and click **'Load Single File Demo'** to initialize the demo workspace.")
+        st.session_state["demo_loaded"] = False
+        start_btn = st.button("🚀 Start Autonomous Debugging", type="primary", use_container_width=True, disabled=True, key="demo_start_btn_disabled")
 
 
 # --- WORKFLOW EXECUTION ---
 if start_btn:
     st.divider()
-    st.subheader("🔄 Multi-Agent Workflow Execution")
+    st.subheader("🔄 Error Classification & Multi-Agent Execution")
     
     progress_bar = st.progress(0)
     status_text = st.empty()
 
-    # Step 1: Create File-Based Workspace if single source file was uploaded
+    # Step 1: Resolve Active Project Path & Context based on Debug Input Mode
     if debug_mode == "Upload Source File":
+        if not uploaded_src_file:
+            st.error("No source file uploaded. Please upload a .py or .java file first.")
+            st.stop()
         active_temp_dir = tempfile.mkdtemp(prefix="debug_workspace_")
         active_project_path = active_temp_dir
         file_path = os.path.join(active_temp_dir, uploaded_filename)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(source_code)
 
-    # Step 2: Initial Execution to Determine Real Errors
-    status_text.text("Initial Execution: Running uploaded code to detect errors...")
+    elif debug_mode == "Demo Presets":
+        demo_file_path = st.session_state.get("demo_file_path")
+        if not demo_file_path or not os.path.exists(demo_file_path):
+            if st.session_state.get("demo_source_code") and st.session_state.get("demo_file_name"):
+                active_temp_dir = tempfile.mkdtemp(prefix="demo_workspace_")
+                demo_file_path = os.path.join(active_temp_dir, st.session_state["demo_file_name"])
+                with open(demo_file_path, "w", encoding="utf-8") as f:
+                    f.write(st.session_state["demo_source_code"])
+                st.session_state["demo_file_path"] = demo_file_path
+            else:
+                st.error("Demo workspace file is missing. Please click 'Load Single File Demo' again.")
+                st.stop()
+        
+        active_project_path = os.path.dirname(demo_file_path)
+        uploaded_filename = st.session_state.get("demo_file_name", "demo.py")
+        active_language = st.session_state.get("demo_language", "python")
+        source_code = st.session_state.get("demo_source_code", "")
+        error_log = st.session_state.get("demo_error_log", "")
+        active_build_system = "pytest" if active_language == "python" else "java-direct"
+
+    elif debug_mode == "Upload Project ZIP":
+        if not active_project_path or not os.path.exists(active_project_path):
+            st.error("Invalid or missing project ZIP workspace. Please upload a project ZIP file first.")
+            st.stop()
+
+    # Step 2: Initial Execution Run
+    status_text.text("Initial Execution: Running code & capturing execution outputs...")
     progress_bar.progress(10)
 
     if active_language == "java":
@@ -284,37 +401,66 @@ if start_btn:
     else:
         init_adapter = PythonAdapter(active_project_path)
 
-    init_exec = init_adapter.run_tests() if debug_mode != "Upload Source File" else init_adapter.run_project()
-    init_error_log = (init_exec.get("output") or init_exec.get("stderr") or "").strip()
+    if debug_mode == "Upload Project ZIP":
+        init_exec = init_adapter.run_tests()
+    else:
+        init_exec = init_adapter.run_project()
 
-    # Step 3: Phase 6 Check — Handle Files With No Error
-    no_error_detected = (
-        init_exec.get("status") == "passed" and 
-        init_exec.get("exit_code") == 0 and 
-        not init_exec.get("stderr")
+    init_error_log = error_log if (error_log and debug_mode == "Demo Presets") else (init_exec.get("output") or init_exec.get("stderr") or "").strip()
+
+    # Step 3: Run Error Classification Engine
+    status_text.text("Running Error Classification Engine...")
+    progress_bar.progress(20)
+
+    classified_error = classify_error(
+        language=active_language,
+        source_code=source_code,
+        execution_result=init_exec,
+        error_log=init_error_log,
+        test_results=init_exec
     )
 
-    if no_error_detected and debug_mode == "Upload Source File":
+    # Display Classified Error Card in UI
+    st.subheader("📊 Error Classification Overview")
+    
+    ec1, ec2, ec3, ec4 = st.columns(4)
+    ec1.metric("Category", classified_error.get("category", "UNKNOWN_ERROR"))
+    ec2.metric("Error Type", classified_error.get("error_type", "None"))
+    ec3.metric("Severity", classified_error.get("severity", "MEDIUM"))
+    ec4.metric("Line Number", str(classified_error.get("line_number")) if classified_error.get("line_number") is not None else "N/A")
+
+    sc1, sc2, sc3, sc4 = st.columns(4)
+    sc1.metric("Subtype", classified_error.get("subtype", "UNCLASSIFIED"))
+    sc2.metric("Source Layer", classified_error.get("source", "unknown").capitalize())
+    sc3.metric("Confidence", classified_error.get("confidence", "HIGH"))
+    sc4.metric("Confirmed Error", "YES ❌" if classified_error.get("confirmed") else "NO ✅")
+
+    if classified_error.get("evidence"):
+        st.caption(f"**Evidence Snippet:** `{classified_error.get('evidence')}`")
+
+    st.divider()
+
+    # Step 4: Check Clean Code / No Error Condition
+    if classified_error.get("category") == "NO_ERROR":
         progress_bar.progress(100)
         status_text.text("✅ Execution Completed Cleanly!")
-        st.success("✅ No runtime or compilation error detected!")
+        st.success("✓ NO ERROR DETECTED — Code executed cleanly without runtime, compilation, or test failures.")
         
-        m1, m2, m3 = st.columns(3)
-        m1.metric("File Name", uploaded_filename)
-        m2.metric("Language", active_language.capitalize())
-        m3.metric("Execution Exit Code", 0)
-
         st.markdown("**Execution Output:**")
         st.code(init_exec.get("stdout") or "Program executed cleanly with no stdout output.", language="bash")
         
-        st.info("Since the uploaded file executed cleanly without errors, the autonomous fix-generation loop was not required.")
+        st.info("Since the code executed cleanly and no confirmed error was classified, the autonomous fix-generation loop was not invoked.")
 
         # Cleanup workspace
         if active_temp_dir:
             WorkspaceManager.cleanup(active_temp_dir)
         st.stop()
 
-    # Step 4: Construct Initial Execution State for 7-Agent Pipeline
+    elif classified_error.get("category") == "POSSIBLE_ISSUE":
+        st.warning(f"⚠️ Status: NO CONFIRMED ERROR — Possible issue noted: {classified_error.get('message')}")
+        st.caption("The code runs without raising an exception, but static analysis detected a potential smell.")
+
+    # Step 5: Construct Initial Execution State for 7-Agent Pipeline
     initial_state = {
         "input_mode": "single_file" if debug_mode != "Upload Project ZIP" else "project",
         "project_path": active_project_path,
@@ -322,8 +468,9 @@ if start_btn:
         "language": active_language,
         "build_system": active_build_system,
         "source_code": source_code,
-        "error_log": error_log if error_log and debug_mode == "Demo Presets" else (init_error_log if init_error_log else "Execution failure"),
+        "error_log": init_error_log if init_error_log else "Execution failure",
         "execution_result": init_exec,
+        "classified_error": classified_error,
         "test_code": st.session_state.get("preset_test", None),
         "code_analysis": None,
         "bug_investigation": None,
@@ -340,7 +487,7 @@ if start_btn:
 
     try:
         status_text.text("1/7 Code Analysis Agent inspecting code structure...")
-        progress_bar.progress(20)
+        progress_bar.progress(30)
         
         # Execute LangGraph workflow
         final_state = debugging_app.invoke(initial_state)
@@ -351,6 +498,10 @@ if start_btn:
 
         # --- DISPLAY 7 AGENTS DETAILS ---
         st.subheader("🧩 Specialized Agent Details")
+
+        # 0. Error Classifier
+        with st.expander("📊 Error Classification Engine Details", expanded=True):
+            st.json(classified_error)
 
         # 1. Code Analysis
         with st.expander("🔍 1. Code Analysis Agent", expanded=True):
@@ -413,7 +564,7 @@ if start_btn:
             sup = final_state.get("final_report", {})
             st.json(sup)
 
-        # --- PHASE 9: BEFORE/AFTER DIFF & FINAL REPORT ---
+        # --- FINAL REPORT SUMMARY CARD ---
         st.divider()
         st.subheader("📊 Final Debugging Report & Code Diff")
 
@@ -423,7 +574,7 @@ if start_btn:
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Verification Status", v_status)
         m2.metric("Iterations Used", report.get("iterations_used", 1))
-        m3.metric("Bug Category", report.get("bug_category", "Unknown"))
+        m3.metric("Bug Category", classified_error.get("category") or report.get("bug_category", "Unknown"))
         m4.metric("Tests Passed", f"{report.get('tests_passed', 0)} / {report.get('tests_passed', 0) + report.get('tests_failed', 0)}")
 
         comp_col1, comp_col2 = st.columns(2)
@@ -443,12 +594,12 @@ if start_btn:
                 st.code(report.get("fixed_code"), language=active_language)
 
         # Save session to SQLite database
-        save_title = f"Fix {report.get('bug_category', 'Bug')} ({uploaded_filename})"
+        save_title = f"Fix {classified_error.get('category', 'Bug')} ({uploaded_filename})"
         save_debug_session(
             title=save_title,
             source_code=source_code if source_code else f"File: {uploaded_filename}",
             error_log=final_state.get("error_log", ""),
-            bug_category=report.get("bug_category", ""),
+            bug_category=classified_error.get("category", "Bug"),
             root_cause=report.get("root_cause", ""),
             fixed_code=report.get("fixed_code", "") if not report.get("patches") else json.dumps(report.get("patches")),
             verification_status=v_status,

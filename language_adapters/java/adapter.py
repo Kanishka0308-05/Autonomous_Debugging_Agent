@@ -15,7 +15,7 @@ class JavaAdapter(BaseLanguageAdapter):
 
     def detect(self) -> bool:
         """Return True if Java files or pom.xml / build.gradle exist in project_path."""
-        if not os.path.exists(self.project_path):
+        if not self.project_path or not isinstance(self.project_path, (str, bytes, os.PathLike)) or not os.path.exists(self.project_path):
             return False
         if os.path.exists(os.path.join(self.project_path, "pom.xml")):
             return True
@@ -29,6 +29,17 @@ class JavaAdapter(BaseLanguageAdapter):
 
     def analyze_project(self) -> Dict[str, Any]:
         """Scan Java source and test directories and detect build configuration."""
+        if not self.project_path or not isinstance(self.project_path, (str, bytes, os.PathLike)) or not os.path.exists(self.project_path):
+            return {
+                "language": "java",
+                "build_system": "java-direct",
+                "source_files": [],
+                "test_files": [],
+                "source_count": 0,
+                "test_count": 0,
+                "error": "Invalid or missing project path."
+            }
+
         source_files = []
         test_files = []
 
@@ -82,6 +93,8 @@ class JavaAdapter(BaseLanguageAdapter):
 
     def _get_maven_command(self) -> Optional[List[str]]:
         """Resolve Maven command prioritizing local wrappers."""
+        if not self.project_path or not isinstance(self.project_path, (str, bytes, os.PathLike)) or not os.path.exists(self.project_path):
+            return None
         is_win = sys.platform.startswith("win")
         wrapper_win = os.path.join(self.project_path, "mvnw.cmd")
         wrapper_nix = os.path.join(self.project_path, "mvnw")
@@ -98,6 +111,8 @@ class JavaAdapter(BaseLanguageAdapter):
 
     def _get_gradle_command(self) -> Optional[List[str]]:
         """Resolve Gradle command prioritizing local wrappers."""
+        if not self.project_path or not isinstance(self.project_path, (str, bytes, os.PathLike)) or not os.path.exists(self.project_path):
+            return None
         is_win = sys.platform.startswith("win")
         wrapper_win = os.path.join(self.project_path, "gradlew.bat")
         wrapper_nix = os.path.join(self.project_path, "gradlew")

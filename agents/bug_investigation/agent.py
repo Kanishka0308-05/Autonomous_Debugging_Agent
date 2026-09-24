@@ -4,69 +4,63 @@ from typing import Dict, Any
 from utils.llm import call_gemini, is_gemini_available
 from agents.bug_investigation.prompts import BUG_INVESTIGATION_SYSTEM_PROMPT, BUG_INVESTIGATION_USER_PROMPT
 
-def fallback_bug_investigation(source_code: str, error_log: str, code_analysis: Dict[str, Any]) -> Dict[str, Any]:
+def fallback_bug_investigation(source_code: str, error_log: str, code_analysis: Dict[str, Any], classified_error: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     Intelligent fallback bug investigation when LLM is unavailable.
-    Parses stack traces and compilation logs to extract line numbers and error types.
+    Parses stack traces, compilation logs, or classified error details to extract line numbers and code snippets.
     """
+    classified_error = classified_error or {}
     functions = code_analysis.get("functions", [])
     suspected_fn = functions[0] if functions else "main"
 
-    # Extract file name and line number from stack trace if present
-    file_match = re.search(r'([A-Za-z0-9_\-\/\\]+\.(?:py|java)):(\d+)', error_log)
-    if not file_match:
-        file_match = re.search(r'File "([^"]+)", line (\d+)', error_log)
-        
-    src_files = code_analysis.get("source_files", [])
-    default_file = src_files[0] if src_files else "source file"
-    suspected_file = file_match.group(1) if file_match else default_file
-    line_num = file_match.group(2) if file_match else "unknown"
+    # Line number and file from classifier or stack trace
+    line_num = str(classified_error.get("line_number")) if classified_error.get("line_number") is not None else "unknown"
+    suspected_file = classified_error.get("file_name")
+
+    if not suspected_file or line_num == "unknown":
+        file_match = re.search(r'([A-Za-z0-9_\-\/\\]+\.(?:py|java)):(\d+)', error_log)
+        if not file_match:
+            file_match = re.search(r'File "([^"]+)", line (\d+)', error_log)
+            
+        src_files = code_analysis.get("source_files", [])
+        default_file = src_files[0] if src_files else "source file"
+        if not suspected_file:
+            suspected_file = file_match.group(1) if file_match else default_file
+        if line_num == "unknown":
+            line_num = file_match.group(2) if file_match else "unknown"
 
     if line_num == "unknown":
         line_match = re.search(r'line (\d+)', error_log, re.IGNORECASE)
         line_num = line_match.group(1) if line_match else "unknown"
 
     # Extract suspicious snippet from code if possible
-    suspicious_snippet = source_code.strip() if source_code else "See stack trace error location."
+    suspicious_snippet = source_code.strip() if source_code else "See error location."
     if source_code:
         lines = source_code.splitlines()
         if line_num.isdigit() and 1 <= int(line_num) <= len(lines):
             suspicious_snippet = lines[int(line_num) - 1].strip()
 
-    reason = "Error detected in stack trace."
-    if "NullPointerException" in error_log:
-        reason = "NullPointerException occurs when attempting to call a method or access a field on an uninitialized (null) object reference."
-    elif "ZeroDivisionError" in error_log or "/ by zero" in error_log:
-        reason = "Division by zero occurs when denominator evaluates to 0 (e.g., empty collection or zero variable)."
-    elif "IndexError" in error_log or "ArrayIndexOutOfBoundsException" in error_log:
-        reason = "Attempting to access list or array index that does not exist."
-    elif "TypeError" in error_log:
-        reason = "Incompatible types used in operation."
-    elif "KeyError" in error_log:
-        reason = "Accessing dictionary key that does not exist in mapping."
-    elif "NameError" in error_log:
-        reason = "Reference to undefined variable or function name."
-    elif "SyntaxError" in error_log:
-        reason = "Invalid syntax structure preventing compilation/parsing."
-    elif "compilation" in error_log.lower() or "cannot find symbol" in error_log.lower():
-        reason = "Java compilation error encountered during build."
+    reason = classified_error.get("message") or "Error detected during execution."
+    if classified_error.get("category"):
+        reason = f"Classified Error [{classified_error.get('category')} - {classified_error.get('error_type')}]: {classified_error.get('message', reason)}"
 
     return {
         "suspected_location": f"{suspected_file}:{line_num} in {suspected_fn}()",
         "suspicious_code": suspicious_snippet,
         "reason": reason,
-        "confidence": "Medium (Fallback Analyzer)"
+        "confidence": classified_error.get("confidence", "Medium (Classifier Engine)")
     }
 
 
 def investigate_bug_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Bug Investigation Agent Node for LangGraph.
-    Receives source_code/project snippets, error_log, code_analysis, returns bug_investigation.
+    Receives source_code/project snippets, error_log, code_analysis, classified_error, returns bug_investigation.
     """
     source_code = state.get("source_code", "")
     error_log = state.get("error_log", "")
     code_analysis = state.get("code_analysis", {})
+    classified_error = state.get("classified_error", {})
 
     # In project mode, combine error logs or execution results if available
     exec_res = state.get("execution_result", {})
@@ -76,9 +70,13 @@ def investigate_bug_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     code_analysis_summary = code_analysis.get("summary", "Syntax valid")
 
     if is_gemini_available():
+        error_context = f"ERROR LOG:\n{error_log}"
+        if classified_error:
+            error_context += f"\n\nSTRUCTURED ERROR CLASSIFICATION:\n{json.dumps(classified_error, indent=2)}"
+
         user_prompt = BUG_INVESTIGATION_USER_PROMPT.format(
             source_code=source_code if source_code else f"Project snippets: {json.dumps(code_analysis.get('snippets', {}), indent=2)}",
-            error_log=error_log,
+            error_log=error_context,
             code_analysis_summary=code_analysis_summary
         )
         raw_response = call_gemini(user_prompt, BUG_INVESTIGATION_SYSTEM_PROMPT)
@@ -99,5 +97,5 @@ def investigate_bug_agent(state: Dict[str, Any]) -> Dict[str, Any]:
                 pass
 
     # Fallback mode
-    result = fallback_bug_investigation(source_code, error_log, code_analysis)
+    result = fallback_bug_investigation(source_code, error_log, code_analysis, classified_error)
     return {"bug_investigation": result}

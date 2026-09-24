@@ -14,7 +14,7 @@ class PythonAdapter(BaseLanguageAdapter):
 
     def detect(self) -> bool:
         """Return True if Python files or manifest exist in project_path."""
-        if not os.path.exists(self.project_path):
+        if not self.project_path or not isinstance(self.project_path, (str, bytes, os.PathLike)) or not os.path.exists(self.project_path):
             return False
         for root, _, files in os.walk(self.project_path):
             for f in files:
@@ -24,6 +24,17 @@ class PythonAdapter(BaseLanguageAdapter):
 
     def analyze_project(self) -> Dict[str, Any]:
         """Scan Python source & test files and extract structural summary."""
+        if not self.project_path or not isinstance(self.project_path, (str, bytes, os.PathLike)) or not os.path.exists(self.project_path):
+            return {
+                "language": "python",
+                "source_files": [],
+                "test_files": [],
+                "manifests": [],
+                "source_count": 0,
+                "test_count": 0,
+                "error": "Invalid or missing project path."
+            }
+
         source_files = []
         test_files = []
         manifests = []

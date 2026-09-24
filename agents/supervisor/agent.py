@@ -27,6 +27,8 @@ def supervisor_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     }
     updated_history = history + [snapshot]
 
+    classified_error = state.get("classified_error", {})
+
     # Generate final report summary
     final_report = {
         "summary": "Autonomous Debugging Workflow Completed",
@@ -38,9 +40,10 @@ def supervisor_agent(state: Dict[str, Any]) -> Dict[str, Any]:
         "language": state.get("language", "python").capitalize(),
         "build_system": state.get("build_system", "pytest"),
         "files_analyzed": len(state.get("source_files", [])) + len(state.get("test_files", [])) or 1,
+        "classified_error": classified_error,
         "suspected_location": state.get("bug_investigation", {}).get("suspected_location"),
         "root_cause": state.get("root_cause", {}).get("root_cause"),
-        "bug_category": state.get("root_cause", {}).get("bug_category"),
+        "bug_category": classified_error.get("category") or state.get("root_cause", {}).get("bug_category"),
         "fixed_code": candidate_fix.get("fixed_code"),
         "patches": candidate_fix.get("patches", []),
         "explanation": candidate_fix.get("explanation"),
