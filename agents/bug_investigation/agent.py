@@ -1,7 +1,7 @@
 import json
 import re
 from typing import Dict, Any
-from utils.llm import call_gemini, is_gemini_available
+from utils.llm import call_llm, is_llm_available
 from agents.bug_investigation.prompts import BUG_INVESTIGATION_SYSTEM_PROMPT, BUG_INVESTIGATION_USER_PROMPT
 
 def fallback_bug_investigation(source_code: str, error_log: str, code_analysis: Dict[str, Any], classified_error: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -69,7 +69,7 @@ def investigate_bug_agent(state: Dict[str, Any]) -> Dict[str, Any]:
 
     code_analysis_summary = code_analysis.get("summary", "Syntax valid")
 
-    if is_gemini_available():
+    if is_llm_available():
         error_context = f"ERROR LOG:\n{error_log}"
         if classified_error:
             error_context += f"\n\nSTRUCTURED ERROR CLASSIFICATION:\n{json.dumps(classified_error, indent=2)}"
@@ -79,7 +79,8 @@ def investigate_bug_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             error_log=error_context,
             code_analysis_summary=code_analysis_summary
         )
-        raw_response = call_gemini(user_prompt, BUG_INVESTIGATION_SYSTEM_PROMPT)
+        raw_response = call_llm(user_prompt, BUG_INVESTIGATION_SYSTEM_PROMPT)
+
         
         if raw_response:
             try:

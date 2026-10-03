@@ -31,7 +31,7 @@ def supervisor_agent(state: Dict[str, Any]) -> Dict[str, Any]:
 
     # Generate final report summary
     final_report = {
-        "summary": "Autonomous Debugging Workflow Completed",
+        "summary": "Autonomous Debugging Completed & Fix Verified Successfully" if verified else "Debugging Iteration Limit Reached (Unresolved Errors Persist)",
         "verified": verified,
         "status": status,
         "iterations_used": iteration_count,

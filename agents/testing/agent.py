@@ -175,7 +175,8 @@ def test_code_agent(state: Dict[str, Any]) -> Dict[str, Any]:
 
         return {
             "test_results": test_results,
-            "execution_result": exec_res
+            "execution_result": exec_res,
+            "error_log": test_results.get("output", "")
         }
 
     # Single-file mode
@@ -184,5 +185,8 @@ def test_code_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     test_results = run_pytest_in_sandbox(fixed_code, user_test_code)
 
     return {
-        "test_results": test_results
+        "test_results": test_results,
+        "source_code": fixed_code,
+        "error_log": test_results.get("output", "")
     }
+

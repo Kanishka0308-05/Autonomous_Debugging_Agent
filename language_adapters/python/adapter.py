@@ -43,13 +43,25 @@ class PythonAdapter(BaseLanguageAdapter):
             dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('venv', '.venv', '__pycache__', 'build')]
             for f in files:
                 rel_path = os.path.relpath(os.path.join(root, f), self.project_path)
+                rel_dir_parts = [p.lower() for p in os.path.dirname(rel_path).split(os.sep)]
+                is_in_test_dir = any(part in ('test', 'tests', 'testing') for part in rel_dir_parts)
+
                 if f.endswith('.py'):
-                    if 'test' in f.lower() or 'test' in rel_path.lower():
+                    if f.startswith('test_') or f.endswith('_test.py') or is_in_test_dir:
                         test_files.append(rel_path)
+                        # Ensure test files are also available in source_files if needed as entry point
+                        source_files.append(rel_path)
                     else:
                         source_files.append(rel_path)
                 elif f in ('requirements.txt', 'pyproject.toml', 'setup.py'):
                     manifests.append(rel_path)
+
+        # Remove duplicates while preserving order
+        source_files = list(dict.fromkeys(source_files))
+        test_files = list(dict.fromkeys(test_files))
+
+        if not source_files and test_files:
+            source_files = test_files.copy()
 
         return {
             "language": "python",
@@ -82,7 +94,8 @@ class PythonAdapter(BaseLanguageAdapter):
         analysis = self.analyze_project()
         syntax_errors = []
 
-        for src in analysis["source_files"] + analysis["test_files"]:
+        all_code_files = list(dict.fromkeys(analysis["source_files"] + analysis["test_files"]))
+        for src in all_code_files:
             full_path = os.path.join(self.project_path, src)
             try:
                 with open(full_path, 'r', encoding='utf-8') as f:
@@ -116,7 +129,7 @@ class PythonAdapter(BaseLanguageAdapter):
         test_files = analysis["test_files"]
 
         if not test_files:
-            # Fall back to running entry file if present
+            # Fall back to running entry file directly when no test suite is present
             return self.run_project()
 
         try:
@@ -131,6 +144,10 @@ class PythonAdapter(BaseLanguageAdapter):
 
             output = (result.stdout + "\n" + result.stderr).strip()
             exit_code = result.returncode
+
+            # If pytest collected 0 tests or exit code is 5 (no tests collected), fall back to running script directly
+            if exit_code == 5 or "collected 0 items" in output or "NO TESTS RAN" in output:
+                return self.run_project()
 
             passed_match = re.search(r'(\d+)\s+passed', output)
             failed_match = re.search(r'(\d+)\s+failed', output)
@@ -177,16 +194,24 @@ class PythonAdapter(BaseLanguageAdapter):
             }
 
     def run_project(self) -> Dict[str, Any]:
-        """Executes a detected Python entry file (e.g. main.py, app.py)."""
+        """Executes a detected Python entry file (e.g. main.py, app.py, or any submitted .py file)."""
         analysis = self.analyze_project()
         entry_file = None
-        for candidate in ("main.py", "app.py", "run.py", "index.py"):
+        for candidate in ("main.py", "app.py", "run.py", "index.py", "solution.py", "demo.py"):
             if candidate in analysis["source_files"] or os.path.exists(os.path.join(self.project_path, candidate)):
                 entry_file = candidate
                 break
 
         if not entry_file and analysis["source_files"]:
-            entry_file = analysis["source_files"][0]
+            non_tests = [f for f in analysis["source_files"] if not (os.path.basename(f).startswith('test_') or os.path.basename(f).endswith('_test.py'))]
+            entry_file = non_tests[0] if non_tests else analysis["source_files"][0]
+
+        if not entry_file:
+            for root, _, files in os.walk(self.project_path):
+                py_candidates = [f for f in files if f.endswith('.py')]
+                if py_candidates:
+                    entry_file = os.path.relpath(os.path.join(root, py_candidates[0]), self.project_path)
+                    break
 
         if not entry_file:
             return {
@@ -199,6 +224,7 @@ class PythonAdapter(BaseLanguageAdapter):
                 "tests_run": False,
                 "files": []
             }
+
 
         try:
             entry_full = os.path.join(self.project_path, entry_file)

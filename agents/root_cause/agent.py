@@ -1,7 +1,8 @@
 import json
 from typing import Dict, Any
-from utils.llm import call_gemini, is_gemini_available
+from utils.llm import call_llm, is_llm_available
 from agents.root_cause.prompts import ROOT_CAUSE_SYSTEM_PROMPT, ROOT_CAUSE_USER_PROMPT
+
 
 def fallback_root_cause(error_log: str, bug_investigation: Dict[str, Any], classified_error: Dict[str, Any] = None) -> Dict[str, Any]:
     """
@@ -85,7 +86,7 @@ def analyze_root_cause_agent(state: Dict[str, Any]) -> Dict[str, Any]:
     if exec_res and not error_log:
         error_log = exec_res.get("stderr") or exec_res.get("output") or ""
 
-    if is_gemini_available():
+    if is_llm_available():
         error_ctx = f"ERROR LOG:\n{error_log}"
         if classified_error:
             error_ctx += f"\n\nCLASSIFIED ERROR DETAILS:\n{json.dumps(classified_error, indent=2)}"
@@ -95,7 +96,8 @@ def analyze_root_cause_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             error_log=error_ctx,
             bug_investigation=json.dumps(bug_investigation, indent=2)
         )
-        raw_response = call_gemini(user_prompt, ROOT_CAUSE_SYSTEM_PROMPT)
+        raw_response = call_llm(user_prompt, ROOT_CAUSE_SYSTEM_PROMPT)
+
 
         if raw_response:
             try:

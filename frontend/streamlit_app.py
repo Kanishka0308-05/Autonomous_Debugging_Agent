@@ -12,7 +12,8 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from demo_examples import DEMO_EXAMPLES, DEMO_PROJECT_PRESETS
-from utils.llm import is_gemini_available, get_api_key
+from utils.llm import is_gemini_available, is_groq_available, is_llm_available, get_active_llm_provider
+
 from database.database import save_debug_session, get_all_sessions, init_db
 from orchestration.graph import debugging_app
 from utils.workspace import WorkspaceManager
@@ -126,12 +127,14 @@ with st.sidebar:
     st.image("https://img.icons8.com/isometric/96/bug.png", width=64)
     st.markdown("### 🤖 Agent Configuration")
     
-    gemini_active = is_gemini_available()
-    if gemini_active:
-        st.success("🟢 Gemini API Key Active")
+    llm_active = is_llm_available()
+    active_provider = get_active_llm_provider()
+    if llm_active:
+        st.success(f"🟢 LLM Active ({active_provider.upper()})")
     else:
-        st.warning("🟠 Mock Mode (No Gemini Key)")
-        st.caption("Add `GEMINI_API_KEY` to `.env` to enable full LLM generation.")
+        st.warning("🟠 Mock Mode (No LLM Key)")
+        st.caption("Add `GEMINI_API_KEY` or `GROQ_API_KEY` to `.env` to enable full LLM generation.")
+
 
     st.divider()
     st.markdown("### 📚 Quick Demo Presets")
@@ -482,8 +485,9 @@ if start_btn:
         "max_iterations": 3,
         "history": [],
         "final_report": None,
-        "is_mock_mode": not gemini_active
+        "is_mock_mode": not llm_active
     }
+
 
     try:
         status_text.text("1/7 Code Analysis Agent inspecting code structure...")
