@@ -12,8 +12,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from demo_examples import DEMO_EXAMPLES, DEMO_PROJECT_PRESETS
-from utils.llm import is_gemini_available, is_groq_available, is_llm_available, get_active_llm_provider
-
+from utils.llm import is_gemini_available, get_api_key
 from database.database import save_debug_session, get_all_sessions, init_db
 from orchestration.graph import debugging_app
 from utils.workspace import WorkspaceManager
@@ -127,14 +126,12 @@ with st.sidebar:
     st.image("https://img.icons8.com/isometric/96/bug.png", width=64)
     st.markdown("### 🤖 Agent Configuration")
     
-    llm_active = is_llm_available()
-    active_provider = get_active_llm_provider()
-    if llm_active:
-        st.success(f"🟢 LLM Active ({active_provider.upper()})")
+    gemini_active = is_gemini_available()
+    if gemini_active:
+        st.success("🟢 Gemini API Key Active")
     else:
-        st.warning("🟠 Mock Mode (No LLM Key)")
-        st.caption("Add `GEMINI_API_KEY` or `GROQ_API_KEY` to `.env` to enable full LLM generation.")
-
+        st.warning("🟠 Mock Mode (No Gemini Key)")
+        st.caption("Add `GEMINI_API_KEY` to `.env` to enable full LLM generation.")
 
     st.divider()
     st.markdown("### 📚 Quick Demo Presets")
@@ -443,25 +440,30 @@ if start_btn:
 
     st.divider()
 
-    # Step 4: Check Clean Code / No Error Condition
+    # Step 4: Ensure Active Debugging Pipeline Always Runs
     if classified_error.get("category") == "NO_ERROR":
-        progress_bar.progress(100)
-        status_text.text("✅ Execution Completed Cleanly!")
-        st.success("✓ NO ERROR DETECTED — Code executed cleanly without runtime, compilation, or test failures.")
-        
-        st.markdown("**Execution Output:**")
-        st.code(init_exec.get("stdout") or "Program executed cleanly with no stdout output.", language="bash")
-        
-        st.info("Since the code executed cleanly and no confirmed error was classified, the autonomous fix-generation loop was not invoked.")
-
-        # Cleanup workspace
-        if active_temp_dir:
-            WorkspaceManager.cleanup(active_temp_dir)
-        st.stop()
+        # Check if running PyTest on functions reveals hidden edge-case errors (e.g. division by zero, empty list)
+        if active_language == "python" and source_code:
+            from agents.testing.agent import run_pytest_in_sandbox
+            test_run = run_pytest_in_sandbox(source_code, st.session_state.get("preset_test"))
+            if test_run.get("status") == "FAIL" or test_run.get("failed", 0) > 0:
+                init_error_log = test_run.get("output", "")
+                classified_error = classify_error(
+                    language=active_language,
+                    source_code=source_code,
+                    execution_result=test_run,
+                    error_log=init_error_log,
+                    test_results=test_run
+                )
+                st.warning(f"⚠️ Initial execution passed module import, but automated edge-case testing detected a bug: {classified_error.get('category')} ({classified_error.get('message')})")
+            else:
+                st.info("ℹ️ Code executed cleanly. Running AI Agent Pipeline for code verification & optimization...")
+        else:
+            st.info("ℹ️ Code compiled/executed cleanly. Running AI Agent Pipeline for code verification & optimization...")
 
     elif classified_error.get("category") == "POSSIBLE_ISSUE":
-        st.warning(f"⚠️ Status: NO CONFIRMED ERROR — Possible issue noted: {classified_error.get('message')}")
-        st.caption("The code runs without raising an exception, but static analysis detected a potential smell.")
+        st.warning(f"⚠️ Status: Potential code smell noted: {classified_error.get('message')}")
+
 
     # Step 5: Construct Initial Execution State for 7-Agent Pipeline
     initial_state = {
@@ -485,9 +487,8 @@ if start_btn:
         "max_iterations": 3,
         "history": [],
         "final_report": None,
-        "is_mock_mode": not llm_active
+        "is_mock_mode": not gemini_active
     }
-
 
     try:
         status_text.text("1/7 Code Analysis Agent inspecting code structure...")
@@ -500,29 +501,28 @@ if start_btn:
 
         st.success("Workflow Execution Finished Successfully!")
 
-        # --- DEBUGGED FILE: verified status, fix summary, code and download ---
-        fr = final_state.get("final_report", {}) or {}
-        fr_patches = fr.get("patches") or []
-        fixed_code_result = fr.get("fixed_code") or (fr_patches[0].get("changes") if fr_patches else source_code)
-        fixed_file_name = os.path.basename(fr_patches[0].get("file", "")) if fr_patches else ""
+        report = final_state.get("final_report", {})
+        fixed_code_result = report.get("fixed_code") or (report.get("patches")[0].get("changes") if report.get("patches") else source_code)
+
+        # --- PROMINENT AI DEBUGGED CODE CARD ---
         st.markdown("### ⚡ AI Debugged Code Output")
-        if fr.get("verified"):
+        if report.get("verified"):
             st.success("✅ Code successfully debugged and verified: the fixed file runs without errors.")
         else:
             st.error("❌ The fix could not be verified. The file below still fails; see the Verification Agent details.")
-        st.markdown(f"**Fix Summary:**\n\n{fr.get('explanation') or 'No explanation provided.'}")
-        st.code(fixed_code_result or "", language=active_language)
+        st.markdown(f"**Fix Summary:**\n\n{report.get('explanation') or 'No explanation provided.'}")
+        st.code(fixed_code_result, language=active_language)
         st.download_button(
             "⬇️ Download debugged file",
             data=fixed_code_result or "",
-            file_name=fixed_file_name or uploaded_filename or ("fixed_code.java" if active_language == "java" else "fixed_code.py"),
+            file_name=uploaded_filename or ("fixed_code.java" if active_language == "java" else "fixed_code.py"),
             mime="text/plain",
             use_container_width=True,
         )
         st.divider()
 
         # --- DISPLAY 7 AGENTS DETAILS ---
-        st.subheader("🧩 Specialized Agent Details")
+        st.subheader("🧩 Specialized Agent Execution Details")
 
         # 0. Error Classifier
         with st.expander("📊 Error Classification Engine Details", expanded=True):

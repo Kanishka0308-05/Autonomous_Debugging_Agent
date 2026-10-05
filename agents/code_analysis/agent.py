@@ -102,19 +102,11 @@ def analyze_code_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             "summary": summary_info.get("summary_text", f"Analyzed {language.capitalize()} project."),
             "snippets": summary_info.get("snippets", {})
         }
-        # Ensure source_code is populated in state for downstream agents
-        source_code = state.get("source_code", "")
-        if not source_code and summary_info.get("snippets"):
-            first_file = list(summary_info["snippets"].keys())[0]
-            source_code = summary_info["snippets"][first_file]
-
         return {
             "code_analysis": analysis_result,
-            "source_code": source_code,
             "source_files": analysis.get("source_files", []),
             "test_files": analysis.get("test_files", [])
         }
-
 
     # Single-file mode
     source_code = state.get("source_code", "")

@@ -44,22 +44,18 @@ def detect_project(project_path: str) -> Dict[str, Any]:
             all_files.append(rel_path)
             
             ext = os.path.splitext(f)[1].lower()
-            rel_dir_parts = [p.lower() for p in os.path.dirname(rel_path).split(os.sep)]
-            is_in_test_dir = any(part in ('test', 'tests', 'testing') for part in rel_dir_parts)
-
             if ext == '.py':
                 py_files.append(rel_path)
-                if f.startswith('test_') or f.endswith('_test.py') or is_in_test_dir:
+                if 'test' in f.lower() or 'test' in rel_path.lower():
                     test_files.append(rel_path)
             elif ext == '.java':
                 java_files.append(rel_path)
-                if f.endswith('Test.java') or f.endswith('Tests.java') or 'src/test' in rel_path.lower().replace('\\', '/'):
+                if 'test' in f.lower() or 'test' in rel_path.lower():
                     test_files.append(rel_path)
             elif ext in ('.cpp', '.c', '.h', '.hpp', '.cs'):
                 cpp_files.append(rel_path)
             elif ext in ('.js', '.ts', '.go', '.rs'):
                 other_code_files.append(rel_path)
-
 
     detected_languages = []
     if py_files or has_requirements or has_pyproject or has_setup_py:
