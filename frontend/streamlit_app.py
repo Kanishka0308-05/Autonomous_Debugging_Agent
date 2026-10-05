@@ -500,6 +500,27 @@ if start_btn:
 
         st.success("Workflow Execution Finished Successfully!")
 
+        # --- DEBUGGED FILE: verified status, fix summary, code and download ---
+        fr = final_state.get("final_report", {}) or {}
+        fr_patches = fr.get("patches") or []
+        fixed_code_result = fr.get("fixed_code") or (fr_patches[0].get("changes") if fr_patches else source_code)
+        fixed_file_name = os.path.basename(fr_patches[0].get("file", "")) if fr_patches else ""
+        st.markdown("### ⚡ AI Debugged Code Output")
+        if fr.get("verified"):
+            st.success("✅ Code successfully debugged and verified: the fixed file runs without errors.")
+        else:
+            st.error("❌ The fix could not be verified. The file below still fails; see the Verification Agent details.")
+        st.markdown(f"**Fix Summary:**\n\n{fr.get('explanation') or 'No explanation provided.'}")
+        st.code(fixed_code_result or "", language=active_language)
+        st.download_button(
+            "⬇️ Download debugged file",
+            data=fixed_code_result or "",
+            file_name=fixed_file_name or uploaded_filename or ("fixed_code.java" if active_language == "java" else "fixed_code.py"),
+            mime="text/plain",
+            use_container_width=True,
+        )
+        st.divider()
+
         # --- DISPLAY 7 AGENTS DETAILS ---
         st.subheader("🧩 Specialized Agent Details")
 
